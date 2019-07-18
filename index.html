@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap.min.css">
+	<script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.3/jquery.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/chart.js@2.8.0"></script>
+	<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
+	<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@0.7.3"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.0.0/papaparse.min.js"></script>
+	<link rel="stylesheet" href="leaflet.css" />
+	<script src="leaflet.js"></script>
+	<title>Display VESC Data</title>
+	<style>
+		.pdfobject-container {
+			height: 500px;
+		}
+
+		.pdfobject {
+			border: 1px solid #666;
+		}
+	</style>
+</head>
+
+<body>
+	<div class="container" style="padding:10px 10px;">
+		<h1>Display VESC Data</h1>
+		<div id="header"></div>
+		<div class="well">
+			<div class="row">
+				<form class="form-inline">
+					<div class="form-group">
+						<label for="files">Upload a CSV with VESC Data:</label>
+						<input type="file" id="files" class="form-control" accept=".csv" required />
+					</div>
+					<div class="form-group">
+						<button type="submit" id="submit-file" class="btn btn-primary">Upload File</button>
+					</div>
+				</form>
+			</div>
+			<div class="row"  style=" height: 20px;" />
+			<div class="row" id="test_map" style=" height: 400px;">
+			</div>
+			<div class="row"  style=" height: 20px;" />
+			<div class="row" id="test_plot" >
+				<canvas id="myChart" style=" height: 400px;"></canvas>
+			</div>
+			<div class="row"  style=" height: 20px;" />
+			<div class="row" id="parsed_csv_list">
+			</div>
+		</div>
+	</div>
+	<div id="footer"></div>
+	</div>
+</body>
+
+</html>
+<script type="text/javascript">
+	$(document).ready(function () {
+		$('#submit-file').on("click", function (e) {
+			e.preventDefault();
+			$('#files').parse({
+				config: {
+					delimiter: "auto",
+					complete: displayHTMLTable,
+				},
+				before: function (file, inputElem) {
+					//console.log("Parsing file...", file);
+				},
+				error: function (err, file) {
+					//console.log("ERROR:", err, file);
+				},
+				complete: function () {
+					//console.log("Done with all files");
+				}
+			});
+		});
+
+		window.chartColors = {
+			red: 'rgb(255, 99, 132)',
+			orange: 'rgb(255, 159, 64)',
+			yellow: 'rgb(255, 205, 86)',
+			green: 'rgb(75, 192, 192)',
+			blue: 'rgb(54, 162, 235)',
+			purple: 'rgb(153, 102, 255)',
+			grey: 'rgb(231,233,237)'
+		};
+
+		window.csvIndex = {
+			time: 14,
+			speed: 5,
+			gps_speed: 18,
+			battery: 6,
+			motor_current: 2,
+			battery_current: 3,
+			latitude: 15,
+			longitude: 16,
+			altitude: 17,
+			skipRows:2,
+		};		
+
+		var mapCursor;
+		var myChart;
+		var elements2Display	= [window.csvIndex.speed, window.csvIndex.battery	,	window.csvIndex.altitude, window.csvIndex.gps_speed	, window.csvIndex.battery_current];
+		var elementsLabel 		= ["Speed"				, "Battery"					,	"Altitude"				, "GPS Speed"				, "Battery current"];
+		var elementsColors 		= [window.chartColors.red, window.chartColors.blue	,	window.chartColors.green, window.chartColors.purple	, window.chartColors.orange];
+		
+		function msToTime(s) {
+		/*	var time =  new Date(Number.parseFloat(s));
+			return time;
+		*/
+			s = s / 1000;
+			var secs = s % 60;
+			s = (s - secs) / 60;
+			var mins = s % 60;
+	
+			return (Number.parseFloat(mins) + Number.parseFloat(secs/60)).toFixed(6);
+		}
+
+
+
+		function displayHTMLTable(results) {
+			var table = "<table class='table'>";
+			var data = results.data;
+
+			var times = []
+			var datas = []
+			var positions = []
+			var positionsIndex = []
+			var curPosition = 0;
+			for (j = 0; j < elements2Display.length; j++) {
+				datas[j] = [];
+			}
+			for (i = 0; i < data.length; i++) {
+				table += "<tr>";
+				var row = data[i];
+				var cells = row.join(",").split(",");
+
+				if (i >= window.csvIndex.skipRows) {
+
+					var time = msToTime(cells[window.csvIndex.time]);
+					times[i - window.csvIndex.skipRows] = time;
+					// store data fields 
+					for (j = 0; j < elements2Display.length; j++) {
+						var value = Number.parseFloat(cells[elements2Display[j]]);
+						
+						datas[j][i - window.csvIndex.skipRows] = {x:time,y:value.toFixed(2)};
+					}			
+
+					positionsIndex[i - window.csvIndex.skipRows] = curPosition;
+
+					// store gps positions to display on map 
+					// only keep position changes
+					var pos = [cells[window.csvIndex.latitude], cells[window.csvIndex.longitude]];
+					if (curPosition > 0) {
+						if (pos != positions[curPosition - 1]) {
+							positions[curPosition] = pos;
+							curPosition++;
+						}
+					} else {
+						if (pos[0] != 0 & pos[1] != 0) {
+							positions[curPosition] = pos;
+							curPosition++;
+						}
+					}
+				}
+
+				// create table for display 
+				for (j = 0; j < cells.length; j++) {
+					table += "<td>";
+					table += cells[j];
+					table += "</th>";
+				}
+				table += "</tr>";
+			}
+			table += "</table>";
+			$("#parsed_csv_list").html(table);
+
+			var ctx = document.getElementById('myChart').getContext('2d');
+			var cfg = {
+				type: 'LineWithLine',
+				data: {
+					labels: times,
+					datasets: [],
+				},
+				options: {
+					responsive: true,
+					animation: {
+          			  duration: 0 // general animation time
+        			},
+					scales: {
+						xAxes: [{
+							type: 'linear',
+							ticks: {
+								min: 0,
+								max: 30
+							}							
+						}]
+					},
+					tooltips: {
+						mode: 'index',
+						axis: 'x',
+						intersect: false,
+					},
+					hover: {
+						mode: 'nearest',
+						intersect: true
+					},			
+					pan: {
+						enabled: true,
+						mode: "xy",
+						speed: 1,
+						threshold: 1
+					},
+					zoom: {
+						enabled: true,
+						drag: false,
+						mode: "x",
+						speed: 0.1,
+					},
+					plugins: {
+						zoom: {
+							zoom: {
+								enabled: true,
+								drag: false,
+								mode: 'x',
+								speed: 10
+							}
+						}
+					}										
+				}
+			};
+
+			// add all the datasets to display
+			for (j = 0; j < elements2Display.length; j++) {
+				cfg.data.datasets[j] = {
+					label: elementsLabel[j],
+					lineTension: 0.1,
+					//showLine: false,
+					pointRadius: 0,
+					data: datas[j],
+					fill: false,
+					backgroundColor: elementsColors[j],
+					borderColor: elementsColors[j],
+				}
+			}
+
+
+			Chart.defaults.LineWithLine = Chart.defaults.line;
+			Chart.controllers.LineWithLine = Chart.controllers.line.extend({
+				draw: function (ease) {
+					Chart.controllers.line.prototype.draw.call(this, ease);
+
+					if (this.chart.tooltip._active && this.chart.tooltip._active.length) {
+						var activePoint = this.chart.tooltip._active[0],
+							ctx = this.chart.ctx,
+							x = activePoint.tooltipPosition().x,
+							topY = this.chart.scales['y-axis-0'].top,
+							bottomY = this.chart.scales['y-axis-0'].bottom;
+
+						// update map cursor
+						mapCursor.setLatLng(positions[positionsIndex[activePoint._index]]);
+
+						// draw line
+						ctx.save();
+						ctx.beginPath();
+						ctx.moveTo(x, topY);
+						ctx.lineTo(x, bottomY);
+						ctx.lineWidth = 2;
+						ctx.strokeStyle = '#07C';
+						ctx.stroke();
+						ctx.restore();
+					}
+				}
+			});
+
+			myChart = new Chart(ctx, cfg);
+
+			var mymap = L.map('test_map').setView([41.37611473863304, 2.0857804833428655], 13);
+
+			L.tileLayer('https://api.tiles.mapbox.com/v4/{id}/{z}/{x}/{y}.png?access_token=pk.eyJ1IjoibWFwYm94IiwiYSI6ImNpejY4NXVycTA2emYycXBndHRqcmZ3N3gifQ.rJcFIG214AriISLbB6B5aw', {
+				maxZoom: 18,
+				attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors, ' +
+					'<a href="https://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>, ' +
+					'Imagery © <a href="https://www.mapbox.com/">Mapbox</a>',
+				id: 'mapbox.streets'
+			}).addTo(mymap);
+
+			var polyline = L.polyline(positions).addTo(mymap);
+			mymap.fitBounds(polyline.getBounds());
+
+			for (i = 0; i < positions.length; i++) {
+				L.circle(positions[i], {
+					color: 'red',
+					fillColor: '#f03',
+					fillOpacity: 0.5,
+					radius: 2
+				}).addTo(mymap);
+			}
+
+			mapCursor = L.marker(positions[0]);
+			mapCursor.addTo(mymap);
+		}
+	});
+</script>
